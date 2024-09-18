@@ -4,13 +4,58 @@ comfy.options.enable_args_parsing()
 import os
 import importlib.util
 import folder_paths
+import itertools
+import logging
 import time
+import utils.extra_config
 from comfy.cli_args import args
 from app.logger import setup_logger
 
 
 setup_logger(verbose=args.verbose)
 
+
+def cleanup_temp():
+    temp_dir = folder_paths.get_temp_directory()
+    if os.path.exists(temp_dir):
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+def add_extra_paths():
+    if args.extra_model_paths_config:
+        for config_path in itertools.chain(*args.extra_model_paths_config):
+            utils.extra_config.load_extra_path_config(config_path)
+    else:
+        extra_model_paths_config_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "extra_model_paths.yaml")
+        if os.path.isfile(extra_model_paths_config_path):
+            utils.extra_config.load_extra_path_config(extra_model_paths_config_path)
+
+    if args.temp_directory:
+        temp_dir = os.path.join(os.path.abspath(args.temp_directory), "temp")
+        logging.info(f"Setting temp directory to: {temp_dir}")
+        folder_paths.set_temp_directory(temp_dir)
+    cleanup_temp()
+
+    if args.output_directory:
+        output_dir = os.path.abspath(args.output_directory)
+        logging.info(f"Setting output directory to: {output_dir}")
+        folder_paths.set_output_directory(output_dir)
+
+    #These are the default folders that checkpoints, clip and vae models will be saved to when using CheckpointSave, etc.. nodes
+    folder_paths.add_model_folder_path("checkpoints", os.path.join(folder_paths.get_output_directory(), "checkpoints"))
+    folder_paths.add_model_folder_path("clip", os.path.join(folder_paths.get_output_directory(), "clip"))
+    folder_paths.add_model_folder_path("vae", os.path.join(folder_paths.get_output_directory(), "vae"))
+    folder_paths.add_model_folder_path("diffusion_models", os.path.join(folder_paths.get_output_directory(), "diffusion_models"))
+    folder_paths.add_model_folder_path("loras", os.path.join(folder_paths.get_output_directory(), "loras"))
+
+    if args.input_directory:
+        input_dir = os.path.abspath(args.input_directory)
+        logging.info(f"Setting input directory to: {input_dir}")
+        folder_paths.set_input_directory(input_dir)
+
+    if args.user_directory:
+        user_dir = os.path.abspath(args.user_directory)
+        logging.info(f"Setting user directory to: {user_dir}")
+        folder_paths.set_user_directory(user_dir)
 
 def execute_prestartup_script():
     def execute_script(script_path):
@@ -23,6 +68,8 @@ def execute_prestartup_script():
         except Exception as e:
             print(f"Failed to execute startup-script: {script_path} / {e}")
         return False
+
+    add_extra_paths()
 
     if args.disable_all_custom_nodes:
         return
@@ -57,13 +104,9 @@ execute_prestartup_script()
 
 # Main code
 import asyncio
-import itertools
 import shutil
 import threading
 import gc
-
-import logging
-import utils.extra_config
 
 if os.name == "nt":
     logging.getLogger("xformers").addFilter(lambda record: 'A matching Triton is not available' not in record.getMessage())
@@ -174,18 +217,8 @@ def hijack_progress(server):
     comfy.utils.set_progress_bar_global_hook(hook)
 
 
-def cleanup_temp():
-    temp_dir = folder_paths.get_temp_directory()
-    if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
 
 if __name__ == "__main__":
-    if args.temp_directory:
-        temp_dir = os.path.join(os.path.abspath(args.temp_directory), "temp")
-        logging.info(f"Setting temp directory to: {temp_dir}")
-        folder_paths.set_temp_directory(temp_dir)
-    cleanup_temp()
 
     if args.windows_standalone_build:
         try:
@@ -199,14 +232,6 @@ if __name__ == "__main__":
     server = server.PromptServer(loop)
     q = execution.PromptQueue(server)
 
-    extra_model_paths_config_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "extra_model_paths.yaml")
-    if os.path.isfile(extra_model_paths_config_path):
-        utils.extra_config.load_extra_path_config(extra_model_paths_config_path)
-
-    if args.extra_model_paths_config:
-        for config_path in itertools.chain(*args.extra_model_paths_config):
-            utils.extra_config.load_extra_path_config(config_path)
-
     nodes.init_extra_nodes(init_custom_nodes=not args.disable_all_custom_nodes)
 
     cuda_malloc_warning()
@@ -215,28 +240,6 @@ if __name__ == "__main__":
     hijack_progress(server)
 
     threading.Thread(target=prompt_worker, daemon=True, args=(q, server,)).start()
-
-    if args.output_directory:
-        output_dir = os.path.abspath(args.output_directory)
-        logging.info(f"Setting output directory to: {output_dir}")
-        folder_paths.set_output_directory(output_dir)
-
-    #These are the default folders that checkpoints, clip and vae models will be saved to when using CheckpointSave, etc.. nodes
-    folder_paths.add_model_folder_path("checkpoints", os.path.join(folder_paths.get_output_directory(), "checkpoints"))
-    folder_paths.add_model_folder_path("clip", os.path.join(folder_paths.get_output_directory(), "clip"))
-    folder_paths.add_model_folder_path("vae", os.path.join(folder_paths.get_output_directory(), "vae"))
-    folder_paths.add_model_folder_path("diffusion_models", os.path.join(folder_paths.get_output_directory(), "diffusion_models"))
-    folder_paths.add_model_folder_path("loras", os.path.join(folder_paths.get_output_directory(), "loras"))
-
-    if args.input_directory:
-        input_dir = os.path.abspath(args.input_directory)
-        logging.info(f"Setting input directory to: {input_dir}")
-        folder_paths.set_input_directory(input_dir)
-    
-    if args.user_directory:
-        user_dir = os.path.abspath(args.user_directory)
-        logging.info(f"Setting user directory to: {user_dir}")
-        folder_paths.set_user_directory(user_dir)
 
     if args.quick_test_for_ci:
         exit(0)
